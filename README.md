@@ -80,7 +80,9 @@ $$
 Maximising $\sum_k r_k$ is **identical** to minimising $J$. Both LQR and PPO are therefore solving the same Bellman optimality equation:
 
 $$
-V^\star(x) = \min_u \left\{ x^\top Qx + u^\top Ru + V^\star(Ax+Bu) \right\}.
+$$
+V^\star(x) = \min_u \{ x^\top Qx + u^\top Ru + V^\star(Ax+Bu) \}
+$$
 $$
 
 LQR exploits the linear-quadratic structure to solve this analytically—the solution is the DARE, and $V^\star(x) = x^\top Px$. PPO approximates the same $V^\star(x)$ with a neural network, using only sampled transitions. The neural network is learning to represent what is, for this problem, a quadratic function.
