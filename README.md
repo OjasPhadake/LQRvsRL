@@ -79,7 +79,7 @@ $$r_k = -\!\left(x_k^\top Q x_k + u_k^\top R u_k\right)$$
 Maximising $\sum_k r_k$ is **identical** to minimising $J$. Both LQR and PPO are
 therefore solving the same Bellman optimality equation:
 
-$$V^*(x) = \min_u \left[ x^\top Qx + u^\top Ru + V^*(Ax + Bu) \right]$$
+$$V^{*}(x) = \min_u \left[ x^\top Qx + u^\top Ru + V^*(Ax + Bu) \right]$$
 
 LQR exploits the linear-quadratic structure to solve this analytically — the
 solution is the DARE, and $V^*(x) = x^\top Px$. PPO approximates the same
