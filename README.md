@@ -73,28 +73,17 @@ requires active feedback to converge.
 ## The Core Insight
 
 The RL reward is defined as the negative LQR stage cost:
+$$
+r_k = -\!\left(x_k^\top Q x_k + u_k^\top R u_k\right)
+$$
 
-$$r_k = -\!\left(x_k^\top Q x_k + u_k^\top R u_k\right)$$
+Maximising $\sum_k r_k$ is **identical** to minimising $J$. Both LQR and PPO are therefore solving the same Bellman optimality equation:
 
-Maximising $\sum_k r_k$ is **identical** to minimising $J$. Both LQR and PPO are
-therefore solving the same Bellman optimality equation:
+$$
+V^\star(x) = \min_u \left\{ x^\top Qx + u^\top Ru + V^\star(Ax+Bu) \right\}.
+$$
 
-$$V^\star(x)
-=
-\min_u
-\left[
-x^\top Qx
-+
-u^\top Ru
-+
-V^\star(Ax+Bu)
-\right]$$
-
-LQR exploits the linear-quadratic structure to solve this analytically — the
-solution is the DARE, and $V^*(x) = x^\top Px$. PPO approximates the same
-$V^\star$ with a neural network, using only sampled transitions. The neural network
-is learning to represent what is, for this problem, a quadratic function.
-
+LQR exploits the linear-quadratic structure to solve this analytically—the solution is the DARE, and $V^\star(x) = x^\top Px$. PPO approximates the same $V^\star(x)$ with a neural network, using only sampled transitions. The neural network is learning to represent what is, for this problem, a quadratic function.
 ### LQR Solution
 
 $$P = \begin{bmatrix}13.827 & 3.868 \\ 3.868 & 4.962\end{bmatrix}, \qquad
