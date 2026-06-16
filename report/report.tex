@@ -1,0 +1,614 @@
+\documentclass[11pt, a4paper]{article}
+
+% ── Packages ────────────────────────────────────────────────────────────────
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+
+% ── Hyperlink style ──────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = blue!60!black,
+  citecolor  = blue!60!black,
+  urlcolor   = blue!60!black,
+}
+
+% ── Theorem environments ─────────────────────────────────────────────────────
+\newtheorem{remark}{Remark}
+
+% ── Custom commands ──────────────────────────────────────────────────────────
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\T}{^\top}
+
+% ── Figure path ──────────────────────────────────────────────────────────────
+\graphicspath{{results/figures/}}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+
+% ── Title ────────────────────────────────────────────────────────────────────
+\begin{center}
+  {\LARGE \textbf{LQR vs Reinforcement Learning on a}}\\[4pt]
+  {\LARGE \textbf{Discrete-Time Double Integrator}}\\[12pt]
+  {\large Ojas Phadake}\\[4pt]
+  {\normalsize \textit{Personal Portfolio Project} \quad|\quad \today}
+\end{center}
+
+\vspace{4pt}
+\hrule
+\vspace{14pt}
+
+% ── Abstract ─────────────────────────────────────────────────────────────────
+\begin{abstract}
+We compare Linear Quadratic Regulation (LQR) and Proximal Policy
+Optimisation (PPO) on a discrete-time double integrator, a canonical
+second-order system in classical control theory. LQR solves the
+infinite-horizon quadratic cost problem analytically by computing the
+solution to the Discrete Algebraic Riccati Equation (DARE), yielding an
+optimal linear feedback law $u_k = -Kx_k$. PPO, a model-free
+reinforcement learning algorithm, is given only the reward signal $r_k =
+-(x_k\T Q x_k + u_k\T R u_k)$ and no knowledge of the system dynamics.
+After $10^5$ environment interactions, PPO achieves a total cost of
+$365.05$, compared to the LQR cost of $364.09$ — a suboptimality gap of
+$+0.26\%$. The PPO control signal correlates with the LQR signal at $r =
+0.987$, indicating that the learned policy closely approximates the linear
+feedback law $u \approx -Kx$ without ever observing the system matrices
+$A$ or $B$. This result illustrates the deepest connection between optimal
+control and reinforcement learning: both are solving the same Bellman
+equation, using different information.
+\end{abstract}
+
+\vspace{8pt}
+\hrule
+\vspace{12pt}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Problem Formulation}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{System Dynamics}
+
+We consider the discrete-time double integrator with state $x_k =
+[p_k,\; v_k]\T \in \R^2$, where $p_k$ denotes position and $v_k$
+velocity, driven by a scalar control input $u_k \in \R$:
+
+\begin{equation}
+  x_{k+1} = Ax_k + Bu_k, \qquad
+  A = \begin{bmatrix}1 & 0.1 \\ 0 & 1\end{bmatrix}, \quad
+  B = \begin{bmatrix}0 \\ 0.1\end{bmatrix}
+  \label{eq:dynamics}
+\end{equation}
+
+This corresponds to Euler discretisation of the continuous double
+integrator $\ddot{p} = u$ with timestep $\Delta t = 0.1\,\mathrm{s}$.
+The initial condition is $x_0 = [5,\;0]\T$ and the control objective
+is to drive $x_k \to 0$.
+
+The open-loop system has both eigenvalues of $A$ at $+1$ (on the unit
+circle), making it marginally stable but not asymptotically stable. No
+passive convergence to the origin occurs; an active feedback controller
+is required. The system is fully state-controllable, which can be verified
+by checking that $\operatorname{rank}([B,\; AB]) = 2$.
+
+\subsection{Shared Objective}
+
+Both LQR and PPO minimise (respectively maximise) the same quadratic
+objective. The infinite-horizon cost to be minimised is
+
+\begin{equation}
+  J = \sum_{k=0}^{\infty}
+      \left( x_k\T Q x_k + u_k\T R u_k \right),
+  \qquad
+  Q = I_2, \quad R = 0.1
+  \label{eq:cost}
+\end{equation}
+
+$Q = I_2$ penalises position and velocity deviations equally; $R = 0.1$
+permits relatively large control inputs to achieve fast settling.
+
+The RL reward at each timestep is defined as the negative stage cost:
+
+\begin{equation}
+  r_k = -\!\left( x_k\T Q x_k + u_k\T R u_k \right)
+  \label{eq:reward}
+\end{equation}
+
+Maximising $\sum_{k} r_k$ is therefore \emph{identical} to minimising
+$J$. This equivalence is not a modelling choice — it is the
+mathematical bridge between optimal control and reinforcement learning,
+and it is the central observation of this report.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Theoretical Background}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Bellman's Principle of Optimality}
+
+Define the cost-to-go (value function) from state $x$ at time $k$ as
+
+\begin{equation}
+  V^*(x_k) = \min_{u_k, u_{k+1},\ldots}
+              \sum_{j=k}^{\infty}
+              \left( x_j\T Q x_j + u_j\T R u_j \right)
+  \label{eq:V}
+\end{equation}
+
+Bellman's principle states that an optimal policy satisfies the
+fixed-point equation
+
+\begin{equation}
+  V^*(x) = \min_{u}
+            \left[ x\T Qx + u\T Ru + V^*(Ax + Bu) \right]
+  \label{eq:bellman}
+\end{equation}
+
+This is the \textit{discrete-time Bellman optimality equation}. It says:
+the optimal total cost from $x$ equals the immediate stage cost plus the
+optimal cost-to-go from the next state. Every algorithm in this report
+is, at its core, attempting to solve or approximate equation
+\eqref{eq:bellman}.
+
+\subsection{Dynamic Programming and the Riccati Equation}
+
+For the linear-quadratic problem, the value function has the quadratic
+form $V^*(x) = x\T P x$ for some positive-definite matrix $P \in
+\R^{2\times 2}$. Substituting into \eqref{eq:bellman} and optimising
+over $u$:
+
+\begin{equation}
+  x\T Px = \min_{u}
+           \left[ x\T Qx + u\T Ru
+                  + (Ax+Bu)\T P(Ax+Bu) \right]
+\end{equation}
+
+Taking $\partial/\partial u = 0$ gives the optimal control law:
+
+\begin{equation}
+  u^* = -\underbrace{(R + B\T PB)^{-1} B\T PA}_{K}\, x
+  \label{eq:lqr_law}
+\end{equation}
+
+Substituting $u^*$ back yields the \textbf{Discrete Algebraic Riccati
+Equation (DARE)}:
+
+\begin{equation}
+  P = Q + A\T PA - A\T PB(R + B\T PB)^{-1}B\T PA
+  \label{eq:dare}
+\end{equation}
+
+This is the fixed-point equation for $P$. Its unique positive-definite
+solution yields the globally optimal infinite-horizon controller. The
+matrix $P$ \emph{is} the value function: $V^*(x) = x\T Px$.
+
+\begin{remark}
+  The DARE \eqref{eq:dare} and the RL Bellman equation
+  \eqref{eq:bellman} are the same equation. In LQR we know $A$ and $B$,
+  so we can solve for $P$ analytically. In RL we do not know $A$ or $B$,
+  so we approximate $V^*$ (or equivalently $P$) from interaction data.
+\end{remark}
+
+\subsection{RL as Approximate Dynamic Programming}
+
+In the RL framework, the agent does not observe $A$ or $B$. It observes
+transitions $(x_k, u_k, r_k, x_{k+1})$ collected by executing its
+policy in the environment. The goal is to find a policy $\pi^*(x)$ such
+that $\sum_k r_k$ is maximised — which, by construction of \eqref{eq:reward},
+coincides with minimising $J$.
+
+The PPO algorithm maintains two function approximators:
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Actor} $\pi_\theta(u \mid x)$: a Gaussian policy
+        parameterised by a neural network with weights $\theta$. For
+        continuous actions, the network outputs the mean $\mu_\theta(x)$
+        and a learned log-standard-deviation.
+
+  \item \textbf{Critic} $V_\phi(x)$: a scalar value function
+        approximator parameterised by weights $\phi$. It approximates
+        $V^*(x)$, i.e.\ the neural network is learning to represent
+        $x\T Px$ for the unknown $P$.
+\end{itemize}
+
+PPO updates both networks by collecting rollouts of $T$ steps, computing
+Generalised Advantage Estimates (GAE):
+
+\begin{equation}
+  \hat{A}_t = \sum_{l=0}^{T-t-1} (\gamma\lambda)^l \delta_{t+l},
+  \qquad
+  \delta_t = r_t + \gamma V_\phi(x_{t+1}) - V_\phi(x_t)
+  \label{eq:gae}
+\end{equation}
+
+and then maximising the clipped surrogate objective for $K$ epochs:
+
+\begin{equation}
+  \mathcal{L}(\theta) =
+  \E_t\!\left[
+    \min\!\left(
+      \rho_t(\theta)\,\hat{A}_t,\;
+      \operatorname{clip}(\rho_t(\theta),\,1-\varepsilon,\,1+\varepsilon)\,\hat{A}_t
+    \right)
+  \right]
+  \label{eq:ppo}
+\end{equation}
+
+where $\rho_t(\theta) = \pi_\theta(u_t\mid x_t)/\pi_{\theta_{\text{old}}}(u_t\mid x_t)$
+is the probability ratio between the updated and the previous policy, and
+$\varepsilon = 0.2$ is the clip threshold. The clip prevents destructively
+large policy updates by refusing to credit changes in $\rho_t$ beyond
+$[1-\varepsilon,\, 1+\varepsilon]$.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Implementation}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Shared Environment}
+
+Both controllers are evaluated using the same \texttt{DoubleIntegratorEnv}
+Gymnasium environment to ensure a fair comparison. The
+\texttt{env.simulate(controller\_fn)} method runs one episode from
+$x_0 = [5, 0]\T$, collecting state, action, reward, and cost trajectories.
+The LQR controller calls \texttt{simulate} directly with $u_k = -Kx_k$;
+PPO's trained policy is wrapped in the same signature.
+
+\subsection{LQR Implementation}
+
+The DARE \eqref{eq:dare} is solved using
+\texttt{scipy.linalg.solve\_discrete\_are}, which implements a
+Schur-decomposition-based algorithm. The resulting matrices are:
+
+\begin{equation}
+  P = \begin{bmatrix} 13.827 & 3.868 \\ 3.868 & 4.962 \end{bmatrix},
+  \qquad
+  K = \begin{bmatrix} 2.585 & 3.575 \end{bmatrix}
+  \label{eq:solution}
+\end{equation}
+
+giving the feedback law $u_k = -2.585\,p_k - 3.575\,v_k$. The
+closed-loop eigenvalues of $A - BK$ are $\{0.899,\; 0.743\}$, both
+strictly inside the unit circle, confirming asymptotic stability.
+
+The theoretical minimum cost from $x_0 = [5,\;0]\T$ is
+
+\begin{equation}
+  J^* = x_0\T P x_0
+  = \begin{bmatrix}5 & 0\end{bmatrix}
+    \begin{bmatrix}13.827 & 3.868 \\ 3.868 & 4.962\end{bmatrix}
+    \begin{bmatrix}5 \\ 0\end{bmatrix}
+  = 345.68
+  \label{eq:Jstar}
+\end{equation}
+
+This is a hard lower bound. No causal controller, linear or nonlinear,
+can achieve $J < J^*$ for this cost function and initial condition.
+
+\subsection{PPO Implementation}
+
+The PPO agent uses Stable-Baselines3 with the following configuration:
+$4$ parallel training environments, $n_{\text{steps}} = 1024$ steps per
+environment per rollout (giving $4096$ transitions per update),
+$10$ optimisation epochs per rollout, minibatch size $64$, learning rate
+$3\times10^{-4}$, clip range $\varepsilon=0.2$, and GAE parameter
+$\lambda=0.95$. Both the actor and critic are two-layer MLPs with $64$
+hidden units and \texttt{tanh} activations.
+
+A \texttt{RescaleAction} wrapper maps the environment's action space
+$[-5,5]$ to $[-1,1]$ for the agent, which is standard practice for
+Gaussian policies in Stable-Baselines3. The reward is used without
+normalisation, preserving its direct correspondence with the LQR cost.
+
+Training runs for $10^5$ total timesteps on a single CPU in
+approximately 2--3 minutes. The policy is evaluated deterministically
+(mean of the Gaussian, no sampling) on the raw unwrapped environment
+to produce a trajectory directly comparable to LQR.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Results}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Open-Loop Dynamics}
+
+Before any controller is applied, it is instructive to observe the
+uncontrolled system. With $u_k = 0$, the dynamics reduce to
+$x_{k+1} = Ax_k$, and since $A = [[1,\,0.1];\,[0,\,1]]$, the position
+remains constant at $p_0 = 5\,\mathrm{m}$ while velocity stays at
+zero. This reflects the marginal stability of the open-loop system.
+A naive sign controller $u_k = -\operatorname{sign}(p_k)$, which ignores
+velocity, produces sustained oscillations due to the lack of damping.
+Only full-state feedback — using both $p_k$ and $v_k$ — achieves
+convergence.
+
+\subsection{LQR Trajectory}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\textwidth]{lqr_trajectory.png}
+  \caption{LQR closed-loop trajectory from $x_0 = [5,\;0]\T$.
+           \textit{Top}: position converges to zero with slight overshoot.
+           \textit{Middle}: velocity rises briefly as the controller
+           accelerates the system, then decays.
+           \textit{Bottom}: initial control saturates at $u=-5$
+           (actuator limit), then smoothly decays to zero.}
+  \label{fig:lqr}
+\end{figure}
+
+The LQR controller settles to $|p_k| < 0.1\,\mathrm{m}$ in $4.40\,\mathrm{s}$
+(44 timesteps) and reaches $p_k \approx 0$ with zero residual error.
+The initial control input saturates at the actuator limit $u = -5$ because
+the unconstrained optimal input $u_0^* = -Kx_0 = -2.585 \times 5 = -12.93$
+exceeds the bound. This saturation introduces a small suboptimality gap
+relative to $J^*$, as the DARE solution was derived without explicit input
+constraints.
+
+\subsection{PPO Trajectory}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\textwidth]{ppo_trajectory.png}
+  \caption{PPO closed-loop trajectory from $x_0 = [5,\;0]\T$ after
+           $10^5$ training timesteps. The trajectory is qualitatively
+           identical to Figure~\ref{fig:lqr}: same settling time,
+           same saturation behaviour, negligible residual error.}
+  \label{fig:ppo}
+\end{figure}
+
+\subsection{Learning Curve}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{ppo_learning_curve.png}
+  \caption{PPO mean episode reward vs training timesteps. The dashed
+           blue line marks the LQR episode reward of $-364.09$.
+           Reward improves rapidly from $-776$ at $10\mathrm{k}$ steps
+           to within $0.5\%$ of LQR by $50\mathrm{k}$ steps, then
+           plateaus.}
+  \label{fig:lc}
+\end{figure}
+
+The learning curve (Figure~\ref{fig:lc}) shows the characteristic shape
+of PPO on a smooth continuous control problem: rapid initial improvement
+as coarse structure in the policy is found, followed by slow convergence
+as the policy fine-tunes near the optimum. The LQR reward is reached
+to within $0.5\%$ at $50\mathrm{k}$ steps and to within $0.26\%$ at
+$100\mathrm{k}$ steps.
+
+\subsection{Side-by-Side Comparison}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.80\textwidth]{comparison_overlay.png}
+  \caption{Overlay of LQR (blue, solid) and PPO (orange, dashed)
+           trajectories. \textit{Top}: position — the two curves are
+           nearly indistinguishable. \textit{Middle}: velocity —
+           same qualitative shape, minor deviation in the transient.
+           \textit{Bottom}: control input — both saturate at $-5$ on
+           the first step; the PPO signal is a close but imperfect
+           replica of the LQR signal ($\text{MAE} = 0.040$).}
+  \label{fig:overlay}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{cumulative_cost.png}
+  \caption{Cumulative stage cost $\sum_{i=0}^{k} c_i$ vs time.
+           The LQR curve (blue) is the lower envelope — no causal
+           controller with knowledge constraints can achieve less.
+           The PPO curve (orange) tracks it closely, converging to
+           a final cost $0.26\%$ above LQR.}
+  \label{fig:cumcost}
+\end{figure}
+
+\subsection{Quantitative Comparison}
+
+\begin{table}[H]
+  \centering
+  \caption{LQR vs PPO on the discrete-time double integrator
+           ($x_0 = [5,\;0]\T$, $Q = I_2$, $R = 0.1$).}
+  \label{tab:comparison}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{Metric} & \textbf{LQR} & \textbf{PPO} \\
+    \midrule
+    Total cost $J$
+      & $364.09$ & $365.05$ \\
+    Theoretical minimum $J^* = x_0\T P x_0$
+      & \multicolumn{2}{c}{$345.68$} \\
+    Suboptimality vs $J^*$
+      & $5.33\%$ & $5.60\%$ \\
+    \midrule
+    Settling time ($|p_k| < 0.1\,\mathrm{m}$)
+      & $4.40\,\mathrm{s}$ & $4.50\,\mathrm{s}$ \\
+    Peak $|u|$
+      & $5.000$ & $5.000$ \\
+    RMS $|u|$
+      & $0.911$ & $0.891$ \\
+    Final $|p|$ (m)
+      & $0.000000$ & $0.006575$ \\
+    \midrule
+    PPO cost gap vs LQR
+      & \multicolumn{2}{c}{$+0.26\%$} \\
+    Control signal correlation $r$
+      & \multicolumn{2}{c}{$0.987$} \\
+    Control signal MAE
+      & \multicolumn{2}{c}{$0.040$} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Discussion}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{What the Numbers Show}
+
+The $+0.26\%$ cost gap and $r=0.987$ action correlation together tell a
+precise story: PPO has effectively rediscovered the linear feedback law
+$u \approx -Kx$ without ever observing the system matrices $A$ or $B$.
+The neural network — two layers of 64 units with \texttt{tanh}
+activations — has learned to represent what is, for this linear-quadratic
+problem, essentially a $1\times2$ linear map.
+
+The settling time difference of $0.10\,\mathrm{s}$ (one timestep) is
+not statistically meaningful. Both controllers drive the system to rest
+in approximately $4.4\,\mathrm{s}$ from $5\,\mathrm{m}$.
+
+\subsection{The 5.33\% Gap Between LQR and $J^*$}
+
+It is important to understand why the LQR controller itself does not
+achieve $J^*$. The theoretical minimum \eqref{eq:Jstar} is derived for
+the \emph{unconstrained, infinite-horizon} problem. Two sources of
+suboptimality exist in simulation:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Finite horizon}: The simulation runs for $200$ steps
+        ($20\,\mathrm{s}$). The tail of the infinite sum
+        $\sum_{k=200}^{\infty} c_k$ is nonzero but negligible (the
+        system has settled to machine precision by step $\sim$80).
+        This contributes only a fraction of the $5.33\%$ gap.
+
+  \item \textbf{Actuator saturation}: The unconstrained LQR law demands
+        $u_0 = -Kx_0 = -12.93$ at the initial step, but the actuator
+        is clipped to $[-5, 5]$. During the saturated phase the controller
+        is suboptimal with respect to $J^*$. This is the dominant source
+        of the gap. Since PPO also saturates ($u_0 = -5$), both
+        controllers share this constraint equally.
+\end{enumerate}
+
+\subsection{Where LQR and RL Diverge}
+
+The near-identical performance here is a consequence of the problem
+structure: the system is linear, the cost is quadratic, and the optimal
+policy is a linear function of the state. In this regime, a two-layer
+neural network has more than sufficient capacity to represent the optimal
+policy, and the environment provides a smooth, well-conditioned reward
+signal.
+
+The two approaches diverge significantly as the problem becomes harder:
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Nonlinear dynamics}: LQR is not applicable. Classical
+        extensions (iLQR, DDP) require either known dynamics or a
+        differentiable model. PPO requires no model at all.
+
+  \item \textbf{Unknown dynamics}: LQR requires $A$ and $B$ to solve the
+        DARE. PPO requires only a simulator or a real physical system.
+        This is the key practical advantage of model-free RL.
+
+  \item \textbf{Sample efficiency}: LQR produces the globally optimal
+        controller in microseconds (one DARE solve). PPO required
+        $10^5$ environment interactions. For expensive-to-run simulators
+        or real hardware, this cost is significant.
+
+  \item \textbf{Constraint handling}: Input constraints ($u \in [-5,5]$)
+        are handled approximately by PPO (through clipping it experiences
+        during training) but are not accounted for in the DARE formulation.
+        Model Predictive Control (MPC) would be the appropriate classical
+        extension for constrained problems.
+\end{itemize}
+
+\subsection{Mathematical Unity}
+
+The central insight of this project is that LQR and RL are not competing
+paradigms — they are two implementations of the same idea. Both seek a
+policy $\pi^*$ that satisfies the Bellman optimality equation
+\eqref{eq:bellman}. LQR exploits the linear-quadratic structure to obtain
+a closed-form solution for the value function $V^*(x) = x\T Px$. PPO
+approximates $V^*$ with a neural network, using only sampled transitions.
+
+The matrix $P$ computed by the DARE \emph{is} the value function. The
+gain $K = (R + B\T PB)^{-1}B\T PA$ \emph{is} the optimal policy. The
+neural network in PPO is approximating both, without knowing that the
+true solution is quadratic or that the optimal policy is linear.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+% ─────────────────────────────────────────────────────────────────────────────
+
+LQR obtains the analytical optimum for this problem because the system
+dynamics are known and the cost is quadratic, allowing the Riccati
+equation to be solved exactly. PPO learns a near-optimal control policy
+through environment interaction alone, without solving the Riccati
+equation or observing the system matrices, achieving a cost within
+$0.26\%$ of the LQR baseline after $10^5$ training steps.
+
+The action correlation of $r = 0.987$ confirms that PPO has effectively
+discovered the linear feedback structure $u \approx -Kx$ that LQR
+computes analytically. For the linear-quadratic setting, the two
+controllers are empirically indistinguishable.
+
+This equivalence has a precise mathematical basis: both algorithms are
+solving the discrete-time Bellman equation. The difference lies not in
+the objective but in the available information. LQR uses knowledge of
+$A$ and $B$ to compute an exact solution; PPO uses interaction data to
+approximate the same solution. As problems grow nonlinear, high-dimensional,
+or involve unknown dynamics, the RL approach becomes the only tractable
+option — but the Bellman equation it is solving remains the same.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\appendix
+\section{Hyperparameter Summary}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\begin{table}[H]
+  \centering
+  \caption{PPO hyperparameters used for all experiments.}
+  \label{tab:hp}
+  \begin{tabular}{llp{6.5cm}}
+    \toprule
+    \textbf{Parameter} & \textbf{Value} & \textbf{Role} \\
+    \midrule
+    \texttt{total\_timesteps} & $10^5$ & Total environment steps across all envs \\
+    \texttt{n\_envs}          & $4$    & Parallel training environments \\
+    \texttt{n\_steps}         & $1024$ & Steps per env per rollout \\
+    \texttt{batch\_size}      & $64$   & Mini-batch size for gradient updates \\
+    \texttt{n\_epochs}        & $10$   & Gradient epochs per rollout \\
+    \texttt{learning\_rate}   & $3\times10^{-4}$ & Adam optimiser step size \\
+    \texttt{clip\_range} $\varepsilon$ & $0.2$ & PPO probability ratio clip \\
+    \texttt{gae\_lambda} $\lambda$ & $0.95$ & GAE bias-variance tradeoff \\
+    \texttt{gamma} $\gamma$   & $0.99$ & Discount factor \\
+    \texttt{ent\_coef}        & $0.0$  & Entropy bonus coefficient \\
+    \texttt{vf\_coef}         & $0.5$  & Value loss weight in combined loss \\
+    \texttt{net\_arch}        & $[64, 64]$ & Hidden layer sizes (both actor and critic) \\
+    \texttt{activation}       & \texttt{tanh} & Nonlinearity \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Code Structure}
+\label{app:code}
+
+The full project is structured as follows:
+
+\begin{verbatim}
+LQRvsRL/
+|-- envs/
+|   `-- double_integrator_env.py   # Shared Gymnasium environment
+|-- controllers/
+|   |-- lqr.py                     # DARE solver, LQRController class
+|   `-- rl_agent.py                # PPO training, evaluation, callback
+|-- analysis/
+|   |-- plots.py                   # All figure generation
+|   `-- compare.py                 # Metrics, comparison table, LaTeX output
+|-- results/
+|   |-- figures/                   # All saved plots
+|   `-- data/                      # Saved trajectories and model
+|-- run_lqr.py                     # Entry point: dynamics + LQR
+|-- train_ppo.py                   # Entry point: PPO training
+`-- main_compare.py                # Entry point: full comparison
+\end{verbatim}
+
+\end{document}

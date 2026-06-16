@@ -1,0 +1,28 @@
+# ── Python bytecode ────────────────────────────────────────
+__pycache__/
+*.py[cod]
+
+# ── Virtual environment ────────────────────────────────────
+rl_venv/
+venv/
+.env/
+
+# ── LaTeX build artefacts ──────────────────────────────────
+report/report.aux
+report/report.log
+report/report.out
+
+# ── Trained model ──────────────────────────────────────────
+results/data/ppo_model.zip
+# ↑ 50–200 MB, reproducible by running train_ppo.py
+#   Don't commit large binary blobs to git
+
+# ── Numpy result caches ────────────────────────────────────
+results/data/
+# ↑ All .npy files are reproducible outputs, not source.
+#   run_lqr.py + train_ppo.py regenerate them.
+#   Committing binary data muddies the diff history.
+
+# ── OS noise ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
